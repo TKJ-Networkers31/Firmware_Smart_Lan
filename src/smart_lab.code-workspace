@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../smart_lab"
+		},
+		{
+			"name": "beta_lab",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

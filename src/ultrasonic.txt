@@ -1,0 +1,47 @@
+#define TRIG_PIN 5
+#define ECHO_PIN 18
+
+float bacaJarakCM() {
+  long durasi;
+  float jarak;
+
+  // 1. Kirim pulsa
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  // 2. Baca waktu pantulan
+  durasi = pulseIn(ECHO_PIN, HIGH, 30000);
+
+  // 3. Cek gagal atau tidak
+  if (durasi == 0) {
+    return -1; // tanda error
+  }
+
+  // 4. Hitung jarak
+  jarak = (durasi / 2.0) * 0.0343;
+
+  return jarak;
+}
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+}
+
+void loop() {
+  float jarak = bacaJarakCM();
+
+  if (jarak < 0) {
+    Serial.println("Objek tidak terdeteksi");
+  } else {
+    Serial.print("Jarak: ");
+    Serial.print(jarak);
+    Serial.println(" cm");
+  }
+
+  delay(500);
+}

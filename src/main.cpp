@@ -10,7 +10,6 @@
 #include <MFRC522.h>
 
 // ======== PIN DECLARATION ========
-//#define PB1         34
 #define RELAY_LED1  27
 #define RELAY_LED2  13
 #define RELAY_LED3  14
@@ -28,46 +27,54 @@
 #define DHTTYPE DHT11
 #define TEMP_LIMIT 27.0
 
+unsigned long now;
+
 // ======== ASYNCHRONUS TIME FOR MILIS ========
 unsigned long lastLDR = 0;
 unsigned long lastDHT = 0;
 unsigned long lastPub = 0;
+unsigned long lastLcd = 0;
 unsigned long doorTimer = 0;
 
 // ======== INTERVAL TIME FOR MILIS ========
 const unsigned long dhtInterval = 2000;
 const unsigned long ldrInterval = 500;
 const unsigned long pubInterval = 2000;
+const unsigned long lcdInterval = 3000;
 const unsigned int doorDuration = 5000;
 
 
 // ======== UNIQCODE INFRARED ========
 uint32_t AC_ON = 0x20DF10EF;   // contoh NEC
-uint32_t AC_OFF = 0x20DF906F;
+uint32_t AC_OFF = 0x20DF906F; //beta code
 
 // ======== OBJECT DELARATION ========
-DHT dht(DHTPIN, DHTTYPE);
-LiquidCrystal_I2C lcd(0x27,16, 2);
-IRsend irsend(KY005);
-WiFiClient espClient;
-PubSubClient mqtt(espClient);
-MFRC522 rfid(SS_PIN, RST_PIN);
+DHT dht(DHTPIN, DHTTYPE); //object sensor suhu
+LiquidCrystal_I2C lcd(0x27,16, 2); //object lcd i2c
+IRsend irsend(KY005); //object sensor infrared
+WiFiClient espClient; //object untuk unit wifi
+PubSubClient mqtt(espClient); //object untuk mqtt protocol
+MFRC522 rfid(SS_PIN, RST_PIN); //object sensor RFID
 
 // ======== VARIABLE ========
-bool modeAuto = true; //jika false maka akan masuk mode manual kontrol via web
-bool login = false; 
+
+bool modeAuto = true; //jika false maka akan masuk mode manual kontrol via web 
+bool locked = false; //mode lock maka ruang tidak bisa di akses
+bool login = false; //keterangan kondisi apakah ada yang login atau sebaliknya
 char user[16] = "none"; //ada 2 kemungkinan "none" atau "name user"
+char idLoginNow[64] = "none";
 char statusAcces[16] = "denied"; //by default
-bool acStatus = false;
-int relay[] = {27,13,14,15}; //relay pin
-float suhuTrigger = 25.0;
+
+bool acStatus = false; // status ac ruangan
+int relay[] = {27,13,14,15,17}; //array relay pin
+float suhuTrigger = 25.0; //nilai patokan suhu
 //int hasil = 0; //pb status
-int ldrRead = 0;
-int thresholdLdr = 50;
-bool doorOpen = false;
-float distance = 0.0;
-float suhu = 0.0;
-float kelembapan = 0.0;
+int ldrRead = 0; //hasil banya sensor ldr/cahaya
+int thresholdLdr = 50; //nilai patikan cahaya pada sensor ldr
+bool doorOpen = false; //status pintu buka atau tertutup
+float distance = 0.0; //hasil baca sensor ultrasonic
+float suhu = 0.0; //hasil baca dht untuk suhu
+float kelembapan = 0.0;  //hasil baca sensor dht untuk kelembapan
 
 // ======== VARIABEL FOR WIFI ========
 const char* ssid = "redmi9c";
@@ -84,10 +91,6 @@ const char* topicSub[] = {
   "lab1/control/door",
   "lab1/control/lamp",
   "lab1/control/mode",
-  //"lab1/control/lamp1",
-  //"lab1/control/lamp3",
-  //"lab1/control/lamp4",
-  //"lab1/control/door",
   "lab1/control/ac"
 };
 
@@ -159,35 +162,6 @@ void connectMQTT() {
   lcdi2c("connected to","broker");
 }
 
-//publish to broker
-void allPublishStatus(float temprature, float humadity, int light, const char* client , bool login, char* user) {
-  StaticJsonDocument<2048> doc;
-  
-  doc["device"] = client;
-  doc["login"] = login;
-  doc["user"] = user;
-  doc["ip"] = WiFi.localIP();
-  doc["rssi"] = WiFi.RSSI();
-
-  doc["temp"] = temprature;
-  doc["hum"] = humadity;
-  doc["light"] = light;
-  doc["distance"] = distance;
-
-  doc["freeMemory"] = ESP.getFreeHeap()/1024;
-  doc["maxAlloc"] = ESP.getMaxAllocHeap()/1024;
-
-  doc["door"] = digitalRead(SELENOID) ? "OPEN" : "CLOSED";
-  doc["lamp1"] = digitalRead(RELAY_LED1) ? "ON" : "OFF";
-  doc["lamp2"] = digitalRead(RELAY_LED2) ? "ON" : "OFF";
-  doc["lamp3"] = digitalRead(RELAY_LED3) ? "ON" : "OFF";
-  doc["lamp4"] = digitalRead(RELAY_LED4) ? "ON" : "OFF";
-
-  size_t n = serializeJson(doc, jsonBuf, sizeof(jsonBuf));
-  // Serial.println(jsonBuf);
-  mqtt.publish(topicPub[0], jsonBuf, n);
-}
-
 // buzzer/alarm function
 void beep(int ms) {
   delay(50);
@@ -207,51 +181,6 @@ void openDoor(){
   }
 }
 
-//mqtt callback
-void callback(char* topic, byte* payload, unsigned int length) {
-  StaticJsonDocument<256> doc;
-  DeserializationError error = deserializeJson(doc, payload, length);
-  if (error) return;
-  if (strcmp(topic, "lab1/control/login") == 0) {
-    strcpy(user,doc["statusAccess"]);
-    if(strcmp(statusAcces, "success")==0){
-      login = !login; //mengubah status login
-      Serial.println(login ? "User login" : "User logout"); //untuk debug
-      Serial.print("status ");
-      Serial.print(login);
-      Serial.println(""); //hingga sini debug
-      openDoor();
-      if (login) {
-        strcpy(user,doc["user"]);
-      } else {
-        strcpy(user,"none");
-      } //atur nama user
-      char buffer[50]; //wadah untuk serial
-      snprintf(buffer, sizeof(buffer), "halo %s", user);
-      lcdi2c(statusAcces,buffer);
-      delay(400);   
-    }else{
-      lcdi2c(statusAcces,"kartu tidak ada");
-      beep(1000);
-    }
-  }
-  if (strcmp(topic, "lab1/control/door") == 0) {
-    digitalWrite(SELENOID,LOW);
-  }
-  if (strcmp(topic, "lab1/control/lamp") == 0) {
-    (strcmp(doc["lamp1"], "HIGH") == 0)? digitalWrite(RELAY_LED1,HIGH):digitalWrite(RELAY_LED1,LOW);
-    (strcmp(doc["lamp2"], "HIGH") == 0)? digitalWrite(RELAY_LED1,HIGH):digitalWrite(RELAY_LED1,LOW);
-    (strcmp(doc["lamp3"], "HIGH") == 0)? digitalWrite(RELAY_LED1,HIGH):digitalWrite(RELAY_LED1,LOW);
-    (strcmp(doc["lamp4"], "HIGH") == 0)? digitalWrite(RELAY_LED1,HIGH):digitalWrite(RELAY_LED1,LOW);
-  }
-  if(strcmp(topic, "lab1/control/mode") == 0){
-    modeAuto = !modeAuto;
-  }
-  if(strcmp(topic, "lab1/control/ac") == 0){
-    //in progres
-  }
-}
-
 //close door function
 void closeDoor(){
   if(doorOpen && millis() - doorTimer >= doorDuration){
@@ -260,18 +189,6 @@ void closeDoor(){
     doorOpen = false;
     Serial.println("Door CLOSED");
   }
-}
-
-//capture psram
-const char* capturePsram(){
-  static char line2[32];
-
-  if (!psramFound()){
-    snprintf(line2, sizeof(line2), "psram:notfound");
-  } else {
-    snprintf(line2, sizeof(line2), "psram:%lu", ESP.getFreePsram()/1024);
-  }
-  return line2;
 }
 
 //membaca jarak
@@ -300,32 +217,149 @@ float readUltrasonic() {
   return jarak;
 }
 
-void sentLogin() {
-  // Cek apakah ada kartu baru di dekat reader
-  if ( ! rfid.PICC_IsNewCardPresent()) {
-    return;
-  }
-  // Pilih salah satu kartu
-  if ( ! rfid.PICC_ReadCardSerial()) {
-    return;
-  }
-  Serial.print("UID Tag :");
-  String id= "";
-  for (byte i = 0; i < rfid.uid.size; i++) {
-     Serial.print(rfid.uid.uidByte[i] < 0x10 ? " 0" : " ");
-     Serial.print(rfid.uid.uidByte[i], HEX);
-     id.concat(String(rfid.uid.uidByte[i] < 0x10 ? " 0" : " "));
-     id.concat(String(rfid.uid.uidByte[i], HEX));
-  }
-  Serial.println();
-  id.toUpperCase();
-  StaticJsonDocument<1024> doc;
-  doc["id"] = id;
+//publish all data to broker
+void allPublishStatus(float temprature, float humadity, int light, const char* client , bool login, char* user) {
+  StaticJsonDocument<2048> doc;
+  
+  doc["device"] = client;
+  doc["login"] = login;
+  doc["user"] = user;
+  doc["ip"] = WiFi.localIP();
+  doc["rssi"] = WiFi.RSSI();
+
+  doc["temp"] = temprature;
+  doc["hum"] = humadity;
+  doc["light"] = light;
+  doc["distance"] = distance;
+
+  doc["freeMemory"] = ESP.getFreeHeap()/1024;
+  doc["maxAlloc"] = ESP.getMaxAllocHeap()/1024;
+
+  doc["door"] = digitalRead(SELENOID) ? "OPEN" : "CLOSED";
+  doc["lamp1"] = digitalRead(RELAY_LED1) ? "ON" : "OFF";
+  doc["lamp2"] = digitalRead(RELAY_LED2) ? "ON" : "OFF";
+  doc["lamp3"] = digitalRead(RELAY_LED3) ? "ON" : "OFF";
+  doc["lamp4"] = digitalRead(RELAY_LED4) ? "ON" : "OFF";
+
   size_t n = serializeJson(doc, jsonBuf, sizeof(jsonBuf));
-  mqtt.publish(topicPub[1], jsonBuf, n);
-  rfid.PICC_HaltA();
+  // Serial.println(jsonBuf);
+  mqtt.publish(topicPub[0], jsonBuf, n);
 }
 
+//mqtt callback
+void callback(char* topic, byte* payload, unsigned int length) {
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, payload, length);
+  if (error) return;
+  if (strcmp(topic, "lab1/control/login") == 0) {
+    strcpy(statusAcces,doc["statusAccess"]);
+    if(strcmp(statusAcces, "success")==0){
+      login = !login; //mengubah status login
+      Serial.println(login ? "User login" : "User logout"); //untuk debug
+      Serial.print("status ");
+      Serial.print(login);
+      Serial.println(""); //hingga sini debug
+      openDoor();
+      if (login) {
+        strcpy(user,doc["user"]);
+      } else {
+        strcpy(user,"none");
+      } //atur nama user
+      char buffer[50]; //wadah untuk serial
+      snprintf(buffer, sizeof(buffer), "halo %s", user);
+      lcdi2c(statusAcces,buffer);
+      delay(1000);
+      lcdi2c("used by : ",user);
+    }else{
+      lcdi2c(statusAcces,"kartu tidak ada");
+      beep(1000);
+    }
+  }
+  if (strcmp(topic, "lab1/control/door") == 0) {
+    (strcmp(doc["door"], "HIGH") == 0)? digitalWrite(SELENOID,HIGH):digitalWrite(SELENOID,LOW);
+
+  }
+  if (strcmp(topic, "lab1/control/lamp") == 0) {
+    (strcmp(doc["lamp1"], "HIGH") == 0)? digitalWrite(RELAY_LED1,HIGH):digitalWrite(RELAY_LED1,LOW);
+    (strcmp(doc["lamp2"], "HIGH") == 0)? digitalWrite(RELAY_LED2,HIGH):digitalWrite(RELAY_LED2,LOW);
+    (strcmp(doc["lamp3"], "HIGH") == 0)? digitalWrite(RELAY_LED3,HIGH):digitalWrite(RELAY_LED3,LOW);
+    (strcmp(doc["lamp4"], "HIGH") == 0)? digitalWrite(RELAY_LED4,HIGH):digitalWrite(RELAY_LED4,LOW);
+  }
+  if(strcmp(topic, "lab1/control/mode") == 0){
+    modeAuto = !modeAuto;
+  }
+  if(strcmp(topic, "lab1/control/lock") == 0){
+    locked = !locked;
+  }
+  if(strcmp(topic, "lab1/control/ac") == 0){
+    //in progres
+  }
+}
+
+//mengirim request login
+void sentLogin() {
+  if (!login){
+    lcdi2c("tempelkan kartu","untuk login");
+    // Cek apakah ada kartu baru di dekat reader
+    if ( ! rfid.PICC_IsNewCardPresent()) {
+      return;
+    }
+    // Pilih salah satu kartu
+    if ( ! rfid.PICC_ReadCardSerial()) {
+      return;
+    }
+    Serial.print("UID Tag :");
+    String id= "";
+    for (byte i = 0; i < rfid.uid.size; i++) {
+       Serial.print(rfid.uid.uidByte[i] < 0x10 ? " 0" : " ");
+       Serial.print(rfid.uid.uidByte[i], HEX);
+       id.concat(String(rfid.uid.uidByte[i] < 0x10 ? " 0" : " "));
+       id.concat(String(rfid.uid.uidByte[i], HEX));
+    }
+    Serial.println();
+    id.toUpperCase();
+    strcpy(idLoginNow, id.c_str());
+    StaticJsonDocument<1024> doc;
+    doc["id"] = id;
+    size_t n = serializeJson(doc, jsonBuf, sizeof(jsonBuf));
+    mqtt.publish(topicPub[1], jsonBuf, n);
+    rfid.PICC_HaltA();
+  }else{
+    lcdi2c("tempelkan kartu","untuk logout");
+    // Cek apakah ada kartu baru di dekat reader
+    if ( ! rfid.PICC_IsNewCardPresent()) {
+      return;
+    }
+    // Pilih salah satu kartu
+    if ( ! rfid.PICC_ReadCardSerial()) {
+      return;
+    }
+    Serial.print("UID Tag :");
+    String id= "";
+    for (byte i = 0; i < rfid.uid.size; i++) {
+       Serial.print(rfid.uid.uidByte[i] < 0x10 ? " 0" : " ");
+       Serial.print(rfid.uid.uidByte[i], HEX);
+       id.concat(String(rfid.uid.uidByte[i] < 0x10 ? " 0" : " "));
+       id.concat(String(rfid.uid.uidByte[i], HEX));
+    }
+    Serial.println();
+    id.toUpperCase();
+    if (idLoginNow == id.c_str()){
+      StaticJsonDocument<1024> doc;
+      doc["id"] = id;
+      size_t n = serializeJson(doc, jsonBuf, sizeof(jsonBuf));
+      mqtt.publish(topicPub[1], jsonBuf, n);
+      rfid.PICC_HaltA();
+    }else{
+      lcdi2c("kartu tidak terdaftar", "tunggu....");
+    }
+    
+  }
+  
+}
+
+
+//main logic
 void setup() {
   //starting system
   Serial.begin(9600);
@@ -340,7 +374,7 @@ void setup() {
   // mqtt.setCallback(mqttCallback);
   rfid.PCD_Init();
   delay(3000);
-  lcdi2c("esp 32 ready sir", (psramFound())? "psram found":"psram notfound");
+  lcdi2c("esp 32 ready sir","ready for work");
   delay(3000);
 
   //deklarasi input output
@@ -349,16 +383,19 @@ void setup() {
   //pinMode(PB1, INPUT); 
   pinMode(LDR, INPUT); 
   pinMode(PIN_BUZZER, OUTPUT); 
-  for(int i = 0; i <= 3; i++){
+  for(int i = 0; i <= 4; i++){
     pinMode(relay[i], OUTPUT);
     digitalWrite(relay[i], LOW); 
   }
   Serial.println("ESP32 IoT Ready");
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("iot is ready");
   delay(2000);
 }
 
 void loop() {
-  unsigned long now = millis(); //memlai perhitungan cpu untuk asynchronus
+  now = millis(); //memlai perhitungan cpu untuk asynchronus
   //baca hasil
   //hasil = digitalRead(PB1);
   ldrRead = analogRead(LDR);
@@ -376,7 +413,10 @@ void loop() {
     // Serial.println(line);
   }
 
-  if(modeAuto){
+  if(modeAuto ){
+    if(!locked){
+      sentLogin();
+    }
     closeDoor();
     if (suhu >= TEMP_LIMIT && !acStatus && login == true) {
       // Serial.println("AC ON");
@@ -388,15 +428,14 @@ void loop() {
       IrSender.sendNEC(AC_OFF, 32);
       acStatus = false;
     }
-
     if(login){
       if(ldrRead <= thresholdLdr){
-        for(int i = 0; i<=2; i++){
+        for(int i = 0; i<=3; i++){
           digitalWrite(relay[i],HIGH);
         }
         delay(100);
       }else{
-        for(int i = 0; i<=2; i++){
+        for(int i = 0; i<=3; i++){
           digitalWrite(relay[i],LOW);
         }
         delay(100);
@@ -408,32 +447,13 @@ void loop() {
         openDoor();
       }
       
-    }else{
-      for(int i = 0; i<=2; i++){
-        digitalWrite(relay[i],LOW);
-      }
     }
+    // else{
+    //   for(int i = 0; i<=2; i++){
+    //     digitalWrite(relay[i],LOW);
+    //   }
+    // }
   }
-
-  if (now - lastLDR >= ldrInterval) {
-    lastLDR = now;
-
-    uint32_t freeHeap = ESP.getFreeHeap()/1024;
-    uint32_t maxAlloc = ESP.getMaxAllocHeap()/1024;
-
-    char line1[32];
-    snprintf(line1, sizeof(line1), "fre|max:%lu|%lu", freeHeap, maxAlloc);
-    const char* line2 = capturePsram();
-    
-    lcdi2c(line1,line2);
-    /* Serial Monitor */
-    // Serial.print("FreeHeap: ");
-    // Serial.print(freeHeap);
-    // Serial.print(" | MaxAlloc: ");
-    // Serial.println(maxAlloc);
-  }
-
-  
 
   if (millis() - lastPub >= pubInterval) {
     lastPub = millis();

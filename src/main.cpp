@@ -38,7 +38,7 @@ unsigned long doorTimer = 0;
 // ======== INTERVAL TIME FOR MILIS ========
 const unsigned long dhtInterval = 2000;
 const unsigned long ldrInterval = 500;
-const unsigned long pubInterval = 2000;
+const unsigned long pubInterval = 5000;
 const unsigned long lcdInterval = 3000;
 const unsigned int doorDuration = 5000;
 
@@ -65,7 +65,7 @@ char idLoginNow[64] = "none";
 char statusAcces[16] = "denied"; //by default
 
 bool acStatus = false; // status ac ruangan
-int relay[] = {27,14,17}; //array relay pin
+int relay[] = {27,14}; //array relay pin
 float suhuTrigger = 25.0; //nilai patokan suhu
 //int hasil = 0; //pb status
 int ldrRead = 0; //hasil banya sensor ldr/cahaya
@@ -99,14 +99,16 @@ const char* codeAc[] = {
 };
 
 // ---------- BUFFERS ----------
-// char uidBuf[32];
-char jsonBuf[512];
-char mqttBuf[192];
+char jsonBuf[1024];
 
 // ======== FUNCTION DECLARATION ========
 
 //print lcd 
-void lcdi2c(const char* one, const char* two){
+void lcdi2c_1(const char* one){
+  lcd.clear();
+  lcd.setCursor(0,0);
+}
+void lcdi2c_2(const char* one, const char* two){
   lcd.clear();
   lcd.setCursor(0,0);
   lcd.print(one);
@@ -143,7 +145,7 @@ void connectWifi(){
     snprintf(line2, sizeof(line2), "Check SSID");
   }
 
-  lcdi2c(line2, line1);
+  lcdi2c_2(line2, line1);
   Serial.println(WiFi.SSID());
   Serial.println(WiFi.localIP());
   Serial.println(WiFi.RSSI());
@@ -160,11 +162,11 @@ void connectMQTT() {
     retry++;
   }
 
-  for(int i = 0; i<=4 ;i++){
+  for(int i = 0; i<=5 ;i++){
     mqtt.subscribe(topicSub[i]);
   }
-  lcd.clear();
-  lcdi2c("connected to","broker");
+  Serial.println("connected to broker");
+  lcdi2c_2("connected to","broker");
 }
 
 // buzzer/alarm function
@@ -223,8 +225,8 @@ float readUltrasonic() {
 }
 
 //publish all data to broker
-void allPublishStatus(float temprature, float humadity, int light, const char* client , bool login, char* user) {
-  StaticJsonDocument<512> doc;
+void allPublishStatus(float temprature, float humadity, int light, const char* client , bool login, char* user, bool modeAuto, bool locked) {
+  StaticJsonDocument<1024> doc;
   
   doc["device"] = client;
   doc["modeAuto"] = modeAuto;
@@ -243,10 +245,8 @@ void allPublishStatus(float temprature, float humadity, int light, const char* c
   doc["maxAlloc"] = ESP.getMaxAllocHeap()/1024;
 
   doc["door"] = digitalRead(SELENOID) ? "OPEN" : "CLOSED";
-  // doc["lamp1"] = digitalRead(RELAY_LED1) ? "ON" : "OFF";
-  doc["lamp2_3"] = digitalRead(RELAY_LED2_3) ? "ON" : "OFF";
-  // doc["lamp3"] = digitalRead(RELAY_LED3) ? "ON" : "OFF";
   doc["lamp1_4"] = digitalRead(RELAY_LED1_4) ? "ON" : "OFF";
+  doc["lamp2_3"] = digitalRead(RELAY_LED2_3) ? "ON" : "OFF";
 
   size_t n = serializeJson(doc, jsonBuf, sizeof(jsonBuf));
   // Serial.println(jsonBuf);
@@ -274,11 +274,11 @@ void callback(char* topic, byte* payload, unsigned int length) {
       } //atur nama user
       char buffer[50]; //wadah untuk serial
       snprintf(buffer, sizeof(buffer), "halo %s", user);
-      lcdi2c(statusAcces,buffer);
+      lcdi2c_2(statusAcces,buffer);
       delay(1000);
-      lcdi2c("used by : ",user);
+      lcdi2c_2("used by : ",user);
     }else{
-      lcdi2c(statusAcces,"kartu tidak ada");
+      lcdi2c_2(statusAcces,"kartu tidak ada");
       beep(1000);
     }
   }
@@ -316,7 +316,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 //mengirim request login
 void sentLogin() {
   if (!login || (strcmp(user,"none")==0 && strcmp(idLoginNow,"none")==0)){
-    lcdi2c("tempelkan kartu","untuk login");
+    lcdi2c_2("tempelkan kartu","untuk login");
     // Cek apakah ada kartu baru di dekat reader
     if ( ! rfid.PICC_IsNewCardPresent()) {
       return;
@@ -342,7 +342,7 @@ void sentLogin() {
     mqtt.publish(topicPub[1], jsonBuf, n);
     rfid.PICC_HaltA();
   }else{
-    lcdi2c("tempelkan kartu","untuk logout");
+    lcdi2c_2("tempelkan kartu","untuk logout");
     // Cek apakah ada kartu baru di dekat reader
     if ( ! rfid.PICC_IsNewCardPresent()) {
       return;
@@ -368,7 +368,7 @@ void sentLogin() {
       mqtt.publish(topicPub[1], jsonBuf, n);
       rfid.PICC_HaltA();
     }else{
-      lcdi2c("kartu tidak terdaftar", "tunggu....");
+      lcdi2c_2("kartu tidak terdaftar", "tunggu....");
     }
     
   }
@@ -401,7 +401,7 @@ void setup() {
   delay(1000);
   connectMQTT();
   mqtt.setCallback(callback);
-  lcdi2c("esp 32 ready sir","ready for work");
+  lcdi2c_2("esp 32 ready sir","ready for work");
   delay(3000);
 
   //deklarasi input output
@@ -409,7 +409,8 @@ void setup() {
   pinMode(ECHO_PIN, INPUT);
   pinMode(LDR, INPUT); 
   pinMode(PIN_BUZZER, OUTPUT); 
-  for(int i = 0; i <= 2; i++){
+  pinMode(SELENOID, LOW); 
+  for(int i = 0; i <= 1; i++){
     pinMode(relay[i], OUTPUT);
     digitalWrite(relay[i], LOW); 
   }
@@ -435,9 +436,9 @@ void loop() {
       Serial.println("Gagal baca DHT!");
       return;
     }
-    // char line[32];
-    // snprintf(line, sizeof(line), "T:%.1fC H:%.0f%%", suhu, kelembapan);
-    // Serial.println(line);
+    char line[32];
+    snprintf(line, sizeof(line), "T:%.1fC H:%.0f%%", suhu, kelembapan);
+    Serial.println(line);
   }
 
   if(modeAuto){
@@ -456,8 +457,8 @@ void loop() {
           delay(100);
         }
         distance = readUltrasonic();
-        // Serial.print("cm : ");
-        // Serial.println(distance);
+        Serial.print("cm : ");
+        Serial.println(distance);
         if (distance <= 10.0){
           openDoor();
         }
@@ -484,6 +485,7 @@ void loop() {
   if (millis() - lastPub >= pubInterval) {
     lastPub = millis();
     allPublishStatus(suhu,kelembapan,ldrRead,clientID,login, user);
+    Serial.println("publish");
   }
 
   delay(200);

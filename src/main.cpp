@@ -303,15 +303,111 @@ void allPublishStatus(float temprature, float humadity, int light, const char* c
 }
 
 //mqtt callback
+// void callback(char* topic, byte* payload, unsigned int length) {
+//   StaticJsonDocument<256> doc;
+//   DeserializationError error = deserializeJson(doc, payload, length);
+//   if (error) return;
+//   //eksekusi respon login
+//   if (strcmp(topic, topicSub[0]) == 0 && !locked) {
+//     const char* sAccess = doc["statusAccess"] | "denied"; // Default jika null
+//     const char* uName = doc["user"] | "none";
+//     if (strcmp(sAccess, "success") == 0) {
+//       login = !login;
+//       if (login) {
+//         strncpy(user, uName, sizeof(user) - 1);
+//         user[sizeof(user) - 1] = '\0';
+//         openDoor();
+//         lcd.clear();
+//         lcd.setCursor(0,0);
+//         lcd.print(sAccess);
+//         lcd.setCursor(0,1);
+//         lcd.print("Hi ");
+//         lcd.print(user);
+//         Serial.print("Login status: ");
+//         Serial.println(login);
+//       } else {
+//         strcpy(user, "none");
+//         openDoor();
+//         lcd.clear();
+//         lcd.setCursor(0,0);
+//         lcd.print(sAccess);
+//         lcd.setCursor(0,1);
+//         lcd.print("bye ");
+//         lcd.print(user);
+//         Serial.print("Login status: ");
+//         Serial.println(login);
+//       }
+//     } else {
+//       lcd.clear();
+//       lcdi2c_2("Akses Ditolak", "Kartu Salah");
+//       beep(1000);
+//     }
+//   }
+//   //auto mode
+//   if(strcmp(topic, topicSub[1]) == 0){
+//     if(strcmp(doc["mode"],"auto")==0){
+//       modeAuto = true;
+//     }else if(strcmp(doc["mode"],"manual")==0){
+//       modeAuto = false;
+//     }else{
+//       //sentErrorMassage(); #coming soon
+//     }
+//   }
+//   //lock mode
+//   if(strcmp(topic, topicSub[2]) == 0 && login == false){
+//     if(strcmp(doc["lock"],"lock")==0){
+//       lcdi2c_1("lock");
+//       locked = true;
+//       shutAllDevice();
+
+//     }else if(strcmp(doc["lock"],"unlock")==0){
+//       locked = false;
+//     }else{
+//       //sentErrorMassage(); #coming soon
+//     }
+//   }
+//   //door control
+//   if (strcmp(topic, topicSub[3]) == 0 && !locked && modeAuto == false) {
+//     (strcmp(doc["door"], "HIGH") == 0)? digitalWrite(SELENOID,HIGH):digitalWrite(SELENOID,LOW);
+//   }
+//   //lamp cotroll
+//   if (strcmp(topic, topicSub[4]) == 0 && !locked && modeAuto == false) {
+//     (strcmp(doc["lamp2"], "HIGH") == 0)? digitalWrite(RELAY_LED2_3,HIGH):digitalWrite(RELAY_LED2_3,LOW);
+//     (strcmp(doc["lamp4"], "HIGH") == 0)? digitalWrite(RELAY_LED1_4,HIGH):digitalWrite(RELAY_LED1_4,LOW);
+//   }
+//   //ac control
+//   if(strcmp(topic, topicSub[5]) == 0){
+//     //ac code in progres
+//   }
+// }
+
 void callback(char* topic, byte* payload, unsigned int length) {
+  // 1. Validasi awal: Pastikan topic dan payload tidak NULL
+  if (topic == NULL || payload == NULL || length == 0) {
+    return; 
+  }
+
+  // 2. Deserialisasi JSON dengan proteksi
   StaticJsonDocument<256> doc;
   DeserializationError error = deserializeJson(doc, payload, length);
-  if (error) return;
-  //eksekusi respon login
-  if (strcmp(topic, topicSub[0]) == 0 && !locked) {
-    const char* sAccess = doc["statusAccess"] | "denied"; // Default jika null
+  if (error) {
+    Serial.print(F("JSON Parsing Error: "));
+    Serial.println(error.c_str());
+    return;
+  }
+
+  // 3. Eksekusi Respon Login (Topic 0)
+  // Selalu cek topicSub[index] != NULL sebelum strcmp
+  if (topicSub[0] != NULL && strcmp(topic, topicSub[0]) == 0 && !locked) {
+    // Gunakan operator '|' untuk memberikan nilai default jika key tidak ada
+    const char* sAccess = doc["statusAccess"] | "denied";
     const char* uName = doc["user"] | "none";
+
     if (strcmp(sAccess, "success") == 0) {
+      // login = true; // Lebih aman set true secara eksplisit daripada !login
+      // strncpy(user, uName, sizeof(user) - 1);
+      // user[sizeof(user) - 1] = '\0';
+      // Salin nama user dengan aman
       login = !login;
       if (login) {
         strncpy(user, uName, sizeof(user) - 1);
@@ -343,41 +439,46 @@ void callback(char* topic, byte* payload, unsigned int length) {
       beep(1000);
     }
   }
-  //auto mode
-  if(strcmp(topic, topicSub[1]) == 0){
-    if(strcmp(doc["mode"],"auto")==0){
+
+  // 4. Auto Mode (Topic 1)
+  if (topicSub[1] != NULL && strcmp(topic, topicSub[1]) == 0) {
+    const char* mode = doc["mode"] | ""; // Default string kosong agar strcmp tidak crash
+    if (strcmp(mode, "auto") == 0) {
       modeAuto = true;
-    }else if(strcmp(doc["mode"],"manual")==0){
+    } else if (strcmp(mode, "manual") == 0) {
       modeAuto = false;
-    }else{
-      //sentErrorMassage(); #coming soon
     }
   }
-  //lock mode
-  if(strcmp(topic, topicSub[2]) == 0 && login == false){
-    if(strcmp(doc["lock"],"lock")==0){
+
+  // 5. Lock Mode (Topic 2)
+  if (topicSub[2] != NULL && strcmp(topic, topicSub[2]) == 0 && !login) {
+    const char* lockCmd = doc["lock"] | "";
+    if (strcmp(lockCmd, "lock") == 0) {
       lcdi2c_1("lock");
       locked = true;
       shutAllDevice();
-
-    }else if(strcmp(doc["lock"],"unlock")==0){
+    } else if (strcmp(lockCmd, "unlock") == 0) {
       locked = false;
-    }else{
-      //sentErrorMassage(); #coming soon
     }
   }
-  //door control
-  if (strcmp(topic, topicSub[3]) == 0 && !locked && modeAuto == false) {
-    (strcmp(doc["door"], "HIGH") == 0)? digitalWrite(SELENOID,HIGH):digitalWrite(SELENOID,LOW);
+
+  // 6. Door Control (Topic 3)
+  if (topicSub[3] != NULL && strcmp(topic, topicSub[3]) == 0 && !locked && !modeAuto) {
+    const char* doorVal = doc["door"] | "LOW";
+    digitalWrite(SELENOID, (strcmp(doorVal, "HIGH") == 0) ? HIGH : LOW);
   }
-  //lamp cotroll
-  if (strcmp(topic, topicSub[4]) == 0 && !locked && modeAuto == false) {
-    (strcmp(doc["lamp2"], "HIGH") == 0)? digitalWrite(RELAY_LED2_3,HIGH):digitalWrite(RELAY_LED2_3,LOW);
-    (strcmp(doc["lamp4"], "HIGH") == 0)? digitalWrite(RELAY_LED1_4,HIGH):digitalWrite(RELAY_LED1_4,LOW);
+
+  // 7. Lamp Control (Topic 4)
+  if (topicSub[4] != NULL && strcmp(topic, topicSub[4]) == 0 && !locked && !modeAuto) {
+    const char* l2 = doc["lamp2"] | "LOW";
+    const char* l4 = doc["lamp4"] | "LOW";
+    digitalWrite(RELAY_LED2_3, (strcmp(l2, "HIGH") == 0) ? HIGH : LOW);
+    digitalWrite(RELAY_LED1_4, (strcmp(l4, "HIGH") == 0) ? HIGH : LOW);
   }
-  //ac control
-  if(strcmp(topic, topicSub[5]) == 0){
-    //ac code in progres
+
+  // 8. AC Control (Topic 5)
+  if (topicSub[5] != NULL && strcmp(topic, topicSub[5]) == 0) {
+    // Implementasi AC di sini
   }
 }
 
@@ -389,9 +490,9 @@ void sentLogin() {
       return;
     }
     // // Pilih salah satu kartu
-    // if ( ! rfid.PICC_ReadCardSerial()) {
-    //   return;
-    // }
+    if ( ! rfid.PICC_ReadCardSerial()) {
+      return;
+    }
     Serial.print("UID Tag :");
     String id= "";
     for (byte i = 0; i < rfid.uid.size; i++) {
@@ -412,13 +513,13 @@ void sentLogin() {
     rfid.PICC_HaltA();
   }else{
     // Cek apakah ada kartu baru di dekat reader
-    // if ( ! rfid.PICC_IsNewCardPresent()) {
-    //   return;
-    // }
-    // // Pilih salah satu kartu
-    // if ( ! rfid.PICC_ReadCardSerial()) {
-    //   return;
-    // }
+    if ( ! rfid.PICC_IsNewCardPresent()) {
+      return;
+    }
+    // Pilih salah satu kartu
+    if ( ! rfid.PICC_ReadCardSerial()) {
+      return;
+    }
     Serial.print("UID Tag :");
     String id= "";
     for (byte i = 0; i < rfid.uid.size; i++) {
@@ -527,9 +628,7 @@ void loop() {
   
   if(modeAuto){
     if(!locked){
-      if(rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()){
-        sentLogin();
-      }
+      sentLogin();
       if(login){
         lcdi2c_2("tempelkan kartu","untuk logout");
         if(ldrRead <= thresholdLdr){
@@ -548,7 +647,6 @@ void loop() {
         Serial.println(distance);
         if (distance <= 10.0){
           openDoor();
-          closeDoor();
         }
       }else{
         lcdi2c_2("tempelkan kartu","untuk login");
@@ -556,7 +654,7 @@ void loop() {
     }else{
       // lcdi2c_1("locked");
     }
-    // closeDoor();
+    closeDoor();
     if (suhu >= TEMP_LIMIT && !acStatus && login == true) {
       // Serial.println("AC ON");
       IrSender.sendNEC(AC_ON, 32);

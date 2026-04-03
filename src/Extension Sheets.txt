@@ -1,0 +1,22 @@
+function doGet(e) {
+
+  var sh = SpreadsheetApp.getActive().getSheetByName("Sheet1");
+
+  var uid = e.parameter.uid;
+  var name = e.parameter.name;
+  var status = e.parameter.status;
+
+  // kalau data kosong
+  if (!uid) {
+    return ContentService.createTextOutput("NO DATA");
+  }
+
+  var now = new Date();
+
+  var tgl = Utilities.formatDate(now, "Asia/Jakarta", "yyyy-MM-dd");
+  var jam = Utilities.formatDate(now, "Asia/Jakarta", "HH:mm:ss");
+
+  sh.appendRow([tgl, jam, uid, name, status]);
+
+  return ContentService.createTextOutput("OK");
+}

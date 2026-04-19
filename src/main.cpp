@@ -8,6 +8,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <MFRC522.h>
+#include <HTTPClient.h>
 
 
 // ======== PIN DECLARATION ========
@@ -77,12 +78,15 @@ float distance = 0.0; //hasil baca sensor ultrasonic
 float suhu = 0.0; //hasil baca dht untuk suhu
 float kelembapan = 0.0;  //hasil baca sensor dht untuk kelembapan
 
+// GOOGLE SCRIPT URL
+String sheetURL = "https://script.google.com/macros/s/AKfycbz-zqtx90oHWwHfh-QBQ4vu1HvO1AwoGksLby7PP32SADF9nH6_Z1k-1K2RH75wzUJ64A/exec";
+
 // ======== VARIABEL FOR WIFI ========
 const char* ssid = "redmi9c";
 const char* password = "11117994";
-const char* mqttServer = "192.168.43.87";
+const char* mqttServer = "192.168.43.93";
 const int   mqttPort   = 1883;
-const char* clientID   = "esp32_smartlab1";
+const char* clientID   = "esp32_smartlab_1";
 const char* topicPub[]   = {
   "lab1/sensor",
   "lab1/access",
@@ -165,7 +169,7 @@ void connectMQTT() {
     retry++;
   }
   if(mqtt.connected()){
-    for(int i = 0; i<=6 ;i++){
+    for(int i = 0; i<=5 ;i++){
       mqtt.subscribe(topicSub[i]);
       Serial.println("subscribe ");
       Serial.println(topicSub[i]);
@@ -232,8 +236,8 @@ float readUltrasonic() {
 }
 
 void offAllRelay(){
-  int pin[] = {14,27,16};
-  for(int i = 0; i<=2; i++){
+  int pin[] = {14,27};
+  for(int i = 0; i<=1; i++){
     digitalWrite(pin[i], LOW);
   }
 }
@@ -262,6 +266,56 @@ void sentTTL(const char* client){
   mqtt.publish(topicPub[2], jsonBuf, n);
 }
 
+void sendToSheet(String uid, String name, String status) {
+
+  if (WiFi.status() == WL_CONNECTED) {
+
+    HTTPClient http;
+
+    // Encode jika ada spasi
+    uid.replace(" ", "%20");
+    name.replace(" ", "%20");
+
+    // Susun URL
+    String url = sheetURL;
+    url += "?uid=" + uid;
+    url += "&name=" + name;
+    url += "&status=" + status;
+
+    Serial.println("Request:");
+    Serial.println(url);
+
+    // Mulai koneksi
+    Serial.println(url);
+
+    http.begin(url);
+
+    // Handle redirect (penting untuk Google)
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+    // Timeout biar gak hang
+    http.setTimeout(5000);
+
+    // Kirim GET
+    int httpCode = http.GET();
+
+    if (httpCode > 0) {
+      Serial.println("HTTP Code: " + String(httpCode));
+
+      String response = http.getString();
+      Serial.println("Response: " + response);
+    } else {
+      Serial.println("Gagal kirim data");
+    }
+
+    // Tutup koneksi
+    http.end();
+
+  } else {
+    Serial.println("WiFi tidak terhubung");
+  }
+}
+
 //publish all data to broker
 void allPublishStatus(float temprature, float humadity, int light, const char* client , bool login, char* user, bool modeAuto, bool locked) {
   StaticJsonDocument<1024> doc;
@@ -271,6 +325,7 @@ void allPublishStatus(float temprature, float humadity, int light, const char* c
   doc["locked"] = locked;
   doc["login"] = login;
   doc["user"] = user;
+  doc["uid"] = idLoginNow;
   doc["ip"] = WiFi.localIP();
   doc["rssi"] = WiFi.RSSI();
 
@@ -282,9 +337,9 @@ void allPublishStatus(float temprature, float humadity, int light, const char* c
   doc["freeMemory"] = ESP.getFreeHeap()/1024;
   doc["maxAlloc"] = ESP.getMaxAllocHeap()/1024;
 
-  doc["door"] = digitalRead(SELENOID) ? "OPEN" : "CLOSED";
-  doc["lamp1_4"] = digitalRead(RELAY_LED1_4) ? "ON" : "OFF";
-  doc["lamp2_3"] = digitalRead(RELAY_LED2_3) ? "ON" : "OFF";
+  doc["door"] = digitalRead(SELENOID) ? true : false;
+  doc["lamp1_2"] = digitalRead(RELAY_LED1_4) ? true : false;
+  doc["lamp3_4"] = digitalRead(RELAY_LED2_3) ? true : false;
 
   size_t n = serializeJson(doc, jsonBuf, sizeof(jsonBuf));
   Serial.print("JSON size: ");
@@ -301,85 +356,6 @@ void allPublishStatus(float temprature, float humadity, int light, const char* c
     Serial.println("wqtt disconnected");
   }
 }
-
-//mqtt callback
-// void callback(char* topic, byte* payload, unsigned int length) {
-//   StaticJsonDocument<256> doc;
-//   DeserializationError error = deserializeJson(doc, payload, length);
-//   if (error) return;
-//   //eksekusi respon login
-//   if (strcmp(topic, topicSub[0]) == 0 && !locked) {
-//     const char* sAccess = doc["statusAccess"] | "denied"; // Default jika null
-//     const char* uName = doc["user"] | "none";
-//     if (strcmp(sAccess, "success") == 0) {
-//       login = !login;
-//       if (login) {
-//         strncpy(user, uName, sizeof(user) - 1);
-//         user[sizeof(user) - 1] = '\0';
-//         openDoor();
-//         lcd.clear();
-//         lcd.setCursor(0,0);
-//         lcd.print(sAccess);
-//         lcd.setCursor(0,1);
-//         lcd.print("Hi ");
-//         lcd.print(user);
-//         Serial.print("Login status: ");
-//         Serial.println(login);
-//       } else {
-//         strcpy(user, "none");
-//         openDoor();
-//         lcd.clear();
-//         lcd.setCursor(0,0);
-//         lcd.print(sAccess);
-//         lcd.setCursor(0,1);
-//         lcd.print("bye ");
-//         lcd.print(user);
-//         Serial.print("Login status: ");
-//         Serial.println(login);
-//       }
-//     } else {
-//       lcd.clear();
-//       lcdi2c_2("Akses Ditolak", "Kartu Salah");
-//       beep(1000);
-//     }
-//   }
-//   //auto mode
-//   if(strcmp(topic, topicSub[1]) == 0){
-//     if(strcmp(doc["mode"],"auto")==0){
-//       modeAuto = true;
-//     }else if(strcmp(doc["mode"],"manual")==0){
-//       modeAuto = false;
-//     }else{
-//       //sentErrorMassage(); #coming soon
-//     }
-//   }
-//   //lock mode
-//   if(strcmp(topic, topicSub[2]) == 0 && login == false){
-//     if(strcmp(doc["lock"],"lock")==0){
-//       lcdi2c_1("lock");
-//       locked = true;
-//       shutAllDevice();
-
-//     }else if(strcmp(doc["lock"],"unlock")==0){
-//       locked = false;
-//     }else{
-//       //sentErrorMassage(); #coming soon
-//     }
-//   }
-//   //door control
-//   if (strcmp(topic, topicSub[3]) == 0 && !locked && modeAuto == false) {
-//     (strcmp(doc["door"], "HIGH") == 0)? digitalWrite(SELENOID,HIGH):digitalWrite(SELENOID,LOW);
-//   }
-//   //lamp cotroll
-//   if (strcmp(topic, topicSub[4]) == 0 && !locked && modeAuto == false) {
-//     (strcmp(doc["lamp2"], "HIGH") == 0)? digitalWrite(RELAY_LED2_3,HIGH):digitalWrite(RELAY_LED2_3,LOW);
-//     (strcmp(doc["lamp4"], "HIGH") == 0)? digitalWrite(RELAY_LED1_4,HIGH):digitalWrite(RELAY_LED1_4,LOW);
-//   }
-//   //ac control
-//   if(strcmp(topic, topicSub[5]) == 0){
-//     //ac code in progres
-//   }
-// }
 
 void callback(char* topic, byte* payload, unsigned int length) {
   // 1. Validasi awal: Pastikan topic dan payload tidak NULL
@@ -404,11 +380,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
     const char* uName = doc["user"] | "none";
 
     if (strcmp(sAccess, "success") == 0) {
-      // login = true; // Lebih aman set true secara eksplisit daripada !login
-      // strncpy(user, uName, sizeof(user) - 1);
-      // user[sizeof(user) - 1] = '\0';
-      // Salin nama user dengan aman
       login = !login;
+
       if (login) {
         strncpy(user, uName, sizeof(user) - 1);
         user[sizeof(user) - 1] = '\0';
@@ -421,7 +394,9 @@ void callback(char* topic, byte* payload, unsigned int length) {
         lcd.print(user);
         Serial.print("Login status: ");
         Serial.println(login);
+        sendToSheet(idLoginNow,uName,"login");
       } else {
+        sendToSheet(idLoginNow,uName,"logout");
         strcpy(user, "none");
         openDoor();
         lcd.clear();
@@ -437,6 +412,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
       lcd.clear();
       lcdi2c_2("Akses Ditolak", "Kartu Salah");
       beep(1000);
+      sendToSheet(idLoginNow,"tidak dikenal","denied");
     }
   }
 
@@ -445,8 +421,14 @@ void callback(char* topic, byte* payload, unsigned int length) {
     const char* mode = doc["mode"] | ""; // Default string kosong agar strcmp tidak crash
     if (strcmp(mode, "auto") == 0) {
       modeAuto = true;
+      if(!login){
+        shutAllDevice();
+      }
     } else if (strcmp(mode, "manual") == 0) {
       modeAuto = false;
+      if(!login){
+        shutAllDevice();
+      }
     }
   }
 
@@ -454,7 +436,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (topicSub[2] != NULL && strcmp(topic, topicSub[2]) == 0 && !login) {
     const char* lockCmd = doc["lock"] | "";
     if (strcmp(lockCmd, "lock") == 0) {
-      lcdi2c_1("lock");
+      // lcdi2c_1("lock");
       locked = true;
       shutAllDevice();
     } else if (strcmp(lockCmd, "unlock") == 0) {
@@ -537,6 +519,7 @@ void sentLogin() {
       size_t n = serializeJson(doc, jsonBuf, sizeof(jsonBuf));
       mqtt.publish(topicPub[1], jsonBuf, n);
       rfid.PICC_HaltA();
+      strcpy(idLoginNow,"none");
     }else{
       lcdi2c_2("kartu tidak terdaftar", "tunggu....");
     }  
@@ -596,6 +579,9 @@ void loop() {
   now = millis(); //memlai perhitungan cpu untuk asynchronus
 
   ldrRead = analogRead(LDR);
+  if(WiFi.status() != WL_CONNECTED){
+    connectWifi();
+  }
   if (!mqtt.connected()) {
     connectMQTT();
   }
@@ -643,8 +629,8 @@ void loop() {
           // delay(100);
         }
         distance = readUltrasonic();
-        Serial.print("cm : ");
-        Serial.println(distance);
+        // Serial.print("cm : ");
+        // Serial.println(distance);
         if (distance <= 10.0){
           openDoor();
         }
@@ -652,7 +638,7 @@ void loop() {
         lcdi2c_2("tempelkan kartu","untuk login");
       }
     }else{
-      // lcdi2c_1("locked");
+      lcdi2c_1("locked");
     }
     closeDoor();
     if (suhu >= TEMP_LIMIT && !acStatus && login == true) {

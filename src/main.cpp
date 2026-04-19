@@ -35,13 +35,15 @@ unsigned long lastDHT = 0;
 unsigned long lastPub = 0;
 unsigned long lastTtl = 0;
 unsigned long lastLcd = 0;
+unsigned long lastDistance = 0;
 unsigned long doorTimer = 0;
 
 // ======== INTERVAL TIME FOR MILIS ========
 const unsigned long dhtInterval = 2000;
 const unsigned long ldrInterval = 500;
-const unsigned long pubInterval = 5000;
+const unsigned long pubInterval = 10000;
 const unsigned long ttlInterval = 6000000;
+const unsigned long distanceInterval = 500;
 const unsigned long lcdInterval = 3000;
 const unsigned int doorDuration = 5000;
 
@@ -77,6 +79,7 @@ bool doorOpen = false; //status pintu buka atau tertutup
 float distance = 0.0; //hasil baca sensor ultrasonic
 float suhu = 0.0; //hasil baca dht untuk suhu
 float kelembapan = 0.0;  //hasil baca sensor dht untuk kelembapan
+bool lastLoginState = !login;
 
 // GOOGLE SCRIPT URL
 String sheetURL = "https://script.google.com/macros/s/AKfycbz-zqtx90oHWwHfh-QBQ4vu1HvO1AwoGksLby7PP32SADF9nH6_Z1k-1K2RH75wzUJ64A/exec";
@@ -378,13 +381,16 @@ void callback(char* topic, byte* payload, unsigned int length) {
     // Gunakan operator '|' untuk memberikan nilai default jika key tidak ada
     const char* sAccess = doc["statusAccess"] | "denied";
     const char* uName = doc["user"] | "none";
+    const char* uuid = doc["uid"] | "none";
 
     if (strcmp(sAccess, "success") == 0) {
       login = !login;
 
       if (login) {
         strncpy(user, uName, sizeof(user) - 1);
+        strncpy(idLoginNow, uuid, sizeof(idLoginNow) - 1);
         user[sizeof(user) - 1] = '\0';
+        user[sizeof(idLoginNow) - 1] = '\0';
         openDoor();
         lcd.clear();
         lcd.setCursor(0,0);
@@ -485,9 +491,11 @@ void sentLogin() {
     }
     Serial.println();
     id.toUpperCase();
-    strcpy(idLoginNow, id.c_str());
     StaticJsonDocument<256> doc;
-    doc["id"] = id;
+    doc["uid"] = id;
+    doc["device"] = clientID;
+    doc["status"] = "login";
+
     lcd.clear();
 
     size_t n = serializeJson(doc, jsonBuf, sizeof(jsonBuf));
@@ -510,15 +518,25 @@ void sentLogin() {
        id.concat(String(rfid.uid.uidByte[i] < 0x10 ? " 0" : " "));
        id.concat(String(rfid.uid.uidByte[i], HEX));
     }
+    // Serial.println("eror di saat logout");
     Serial.println();
     id.toUpperCase();
+    if(id != idLoginNow){
+      Serial.println(id);
+      Serial.println(idLoginNow);
+      Serial.println("kartu tidak sesuai");
+      return;
+    }
     if (strcmp(idLoginNow,id.c_str())==0){
       StaticJsonDocument<256> doc;
-      doc["id"] = id;
+      doc["uid"] = id;
+      doc["device"] = clientID;
+      doc["status"] = "logout";
       lcd.clear();
       size_t n = serializeJson(doc, jsonBuf, sizeof(jsonBuf));
       mqtt.publish(topicPub[1], jsonBuf, n);
       rfid.PICC_HaltA();
+      delay(1000);
       strcpy(idLoginNow,"none");
     }else{
       lcdi2c_2("kartu tidak terdaftar", "tunggu....");
@@ -615,8 +633,17 @@ void loop() {
   if(modeAuto){
     if(!locked){
       sentLogin();
+      if (login != lastLoginState) { // Hanya update LCD jika status login berubah
+        lcd.clear();
+        if(login) {
+            lcdi2c_2("Akses Diterima", user);
+        } else {
+            lcdi2c_2("Silahkan", "Login");
+        }
+        lastLoginState = login;
+      }
       if(login){
-        lcdi2c_2("tempelkan kartu","untuk logout");
+        // lcdi2c_2("tempelkan kartu","untuk logout");
         if(ldrRead <= thresholdLdr){
           for(int i = 0; i<=1; i++){
             digitalWrite(relay[i],HIGH);
@@ -628,15 +655,19 @@ void loop() {
           }
           // delay(100);
         }
-        distance = readUltrasonic();
+        if(now - lastDistance >= distanceInterval){
+          lastDistance = now;
+          distance = readUltrasonic();
+        }
         // Serial.print("cm : ");
         // Serial.println(distance);
         if (distance <= 10.0){
           openDoor();
         }
-      }else{
-        lcdi2c_2("tempelkan kartu","untuk login");
       }
+      // else{
+      //   lcdi2c_2("tempelkan kartu","untuk login");
+      // }
     }else{
       lcdi2c_1("locked");
     }

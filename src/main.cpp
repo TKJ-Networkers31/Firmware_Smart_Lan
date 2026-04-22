@@ -12,8 +12,8 @@
 
 
 // ======== PIN DECLARATION ========
-#define RELAY_LED2_3  14
-#define RELAY_LED1_4  27
+#define RELAY_LED1_2  14
+#define RELAY_LED3_4  27
 #define SELENOID      17
 #define TRIG_PIN      25
 #define ECHO_PIN      26
@@ -98,9 +98,10 @@ const char* topicPub[]   = {
 const char* topicSub[] = {
   "lab1/control/login",
   "lab1/control/mode",
-  "lab1/control/lock",
+  "lab1/control/locked",
   "lab1/control/door",
-  "lab1/control/lamp",
+  "lab1/control/lamp1_2",
+  "lab1/control/lamp3_4",
   "lab1/control/ac",
 };
 
@@ -341,8 +342,8 @@ void allPublishStatus(float temprature, float humadity, int light, const char* c
   doc["maxAlloc"] = ESP.getMaxAllocHeap()/1024;
 
   doc["door"] = digitalRead(SELENOID) ? true : false;
-  doc["lamp1_2"] = digitalRead(RELAY_LED1_4) ? true : false;
-  doc["lamp3_4"] = digitalRead(RELAY_LED2_3) ? true : false;
+  doc["lamp1_2"] = digitalRead(RELAY_LED1_2) ? true : false;
+  doc["lamp3_4"] = digitalRead(RELAY_LED3_4) ? true : false;
 
   size_t n = serializeJson(doc, jsonBuf, sizeof(jsonBuf));
   Serial.print("JSON size: ");
@@ -375,10 +376,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     return;
   }
 
-  // 3. Eksekusi Respon Login (Topic 0)
-  // Selalu cek topicSub[index] != NULL sebelum strcmp
   if (topicSub[0] != NULL && strcmp(topic, topicSub[0]) == 0 && !locked) {
-    // Gunakan operator '|' untuk memberikan nilai default jika key tidak ada
     const char* sAccess = doc["statusAccess"] | "denied";
     const char* uName = doc["user"] | "none";
     const char* uuid = doc["uid"] | "none";
@@ -413,24 +411,29 @@ void callback(char* topic, byte* payload, unsigned int length) {
         lcd.print(user);
         Serial.print("Login status: ");
         Serial.println(login);
+        offAllRelay();
       }
     } else {
       lcd.clear();
       lcdi2c_2("Akses Ditolak", "Kartu Salah");
       beep(1000);
       sendToSheet(idLoginNow,"tidak dikenal","denied");
+      delay(1000);
+      lcdi2c_2("Silahkan", "Login");
+
+
     }
   }
 
   // 4. Auto Mode (Topic 1)
   if (topicSub[1] != NULL && strcmp(topic, topicSub[1]) == 0) {
-    const char* mode = doc["mode"] | ""; // Default string kosong agar strcmp tidak crash
-    if (strcmp(mode, "auto") == 0) {
+    bool mode = doc["mode_auto"] | false; // Default string kosong agar strcmp tidak crash
+    if (mode) {
       modeAuto = true;
       if(!login){
         shutAllDevice();
       }
-    } else if (strcmp(mode, "manual") == 0) {
+    } else {
       modeAuto = false;
       if(!login){
         shutAllDevice();
@@ -440,32 +443,35 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
   // 5. Lock Mode (Topic 2)
   if (topicSub[2] != NULL && strcmp(topic, topicSub[2]) == 0 && !login) {
-    const char* lockCmd = doc["lock"] | "";
-    if (strcmp(lockCmd, "lock") == 0) {
+    bool lockCmd = doc["locked"] | false;
+    if (lockCmd) {
       // lcdi2c_1("lock");
       locked = true;
       shutAllDevice();
-    } else if (strcmp(lockCmd, "unlock") == 0) {
+    } else {
       locked = false;
+      lcdi2c_2("Silahkan", "Login");
     }
   }
 
   // 6. Door Control (Topic 3)
   if (topicSub[3] != NULL && strcmp(topic, topicSub[3]) == 0 && !locked && !modeAuto) {
-    const char* doorVal = doc["door"] | "LOW";
-    digitalWrite(SELENOID, (strcmp(doorVal, "HIGH") == 0) ? HIGH : LOW);
+    bool doorVal = doc["door"] | false;
+    digitalWrite(SELENOID, (doorVal) ? HIGH : LOW);
   }
 
   // 7. Lamp Control (Topic 4)
   if (topicSub[4] != NULL && strcmp(topic, topicSub[4]) == 0 && !locked && !modeAuto) {
-    const char* l2 = doc["lamp2"] | "LOW";
-    const char* l4 = doc["lamp4"] | "LOW";
-    digitalWrite(RELAY_LED2_3, (strcmp(l2, "HIGH") == 0) ? HIGH : LOW);
-    digitalWrite(RELAY_LED1_4, (strcmp(l4, "HIGH") == 0) ? HIGH : LOW);
+    bool l2 = doc["lampu1_2"] |false;
+    digitalWrite(RELAY_LED1_2, (l2) ? HIGH : LOW);
+  }
+  if (topicSub[5] != NULL && strcmp(topic, topicSub[5]) == 0 && !locked && !modeAuto) {
+    bool l4 = doc["lampu3_4"] | false;
+    digitalWrite(RELAY_LED3_4, (l4) ? HIGH : LOW);
   }
 
   // 8. AC Control (Topic 5)
-  if (topicSub[5] != NULL && strcmp(topic, topicSub[5]) == 0) {
+  if (topicSub[6] != NULL && strcmp(topic, topicSub[6]) == 0) {
     // Implementasi AC di sini
   }
 }
